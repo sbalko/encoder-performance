@@ -1,0 +1,111 @@
+<html>
+<body>
+
+<button id="start">Start</button>
+<button id="stop" disabled="disabled">Stop</button>
+
+<p>
+<canvas id="source" width="1920" height="1080"></canvas>
+
+<p>
+  <hr>
+<p>
+
+<script>
+const canvas = document.getElementById('source');
+const context = canvas.getContext('webgl');
+
+const width = Number.parseInt(canvas.getAttribute('width'));
+const height = Number.parseInt(canvas.getAttribute('height'));
+
+const framerate = 30;
+const microsecond = 1e6;
+const duration =  Math.floor((1 / framerate) * microsecond);
+
+const start = document.getElementById('start');
+const stop = document.getElementById('stop');
+
+start.onclick = () => {
+	start.setAttribute('disabled', 'disabled');
+	stop.removeAttribute('disabled');
+
+  running = true;
+  run();
+};
+
+stop.onclick = () => {
+	stop.setAttribute('disabled', 'disabled');
+	running = false;
+
+};
+
+function request(worker, payload, transferables) {
+  const promise = new Promise((resolve, reject) => {
+    worker.onmessage = event => resolve(event.data);
+    worker.onerror = error => reject(error);
+  });
+
+  worker.postMessage(payload, transferables);
+
+  return promise;
+}
+
+async function run() {
+	start.setAttribute('disabled', 'disabled');
+
+  const worker = new Worker('./worker.js');
+
+  await request(worker, {
+    kind: 'config',
+    configuration: {
+      width,
+      height,
+      codec: 'avc1.42002A', // baseline profile, level 4.2
+      bitrate: 2_000_000,
+      avc: { format: 'annexb' },
+      hardwareAcceleration: 'no-preference',
+      framerate,
+      alpha: 'discard',
+      latencyMode: 'quality',
+      bitrateMode: 'variable'
+    },
+  });
+
+  for (let i = 0; running; ++i) {
+    const bitmap = await createImageBitmap(canvas);
+    const frame = new VideoFrame(bitmap, {
+    	displayWidth: width,
+      displayHeight: height,
+      timestamp: Math.floor((i/framerate) * microsecond),
+      duration,
+    });
+
+    try {
+      const { response } = await request(worker, {
+        kind: 'encode',
+        frames: [frame],
+      }, [frame]);
+
+      document.body.append(`VideoEncoder.encode(...) execution time after ${response.count} calls, min: ${response.min}ms, max: ${response.max}ms, avg: ${response.avg}ms, median: ${response.median}`);
+      document.body.appendChild(document.createElement('br'));
+    } catch (error) {
+      document.body.append('Error: ' + error);
+
+    }
+  }
+
+  await request(worker, { kind: 'close' });
+
+  console.log('Terminating worker');
+  worker.terminate();
+
+	start.removeAttribute('disabled');
+}
+
+
+</script>
+
+</body>
+
+
+</html>
